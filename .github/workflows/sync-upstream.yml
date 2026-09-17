@@ -25,6 +25,8 @@ jobs:
       - name: Rebase main onto upstream and push
         run: |
           set -euo pipefail
+          RETENTION_DAYS=30  # how long pre-sync backup tags are kept
+
           # The rebase needs a committer identity; the author of each replayed
           # commit is preserved.
           git config user.name "github-actions[bot]"
@@ -39,8 +41,31 @@ jobs:
             exit 0
           fi
 
+          # Backup tag: keeps the pre-rebase state reachable, so recovering files
+          # that a sync propagated away (e.g. deleted upstream by mistake) is a
+          # single checkout even if we notice days later:
+          #   git fetch origin tag <tag> && git checkout <tag> -- path/to/file
+          # The short SHA suffix keeps tags unique if two runs land in the same
+          # minute. Pushed before the rebase so the backup survives a failed sync.
+          tag="sync/backup/$(date -u +%Y-%m-%dT%H%M)-$(git rev-parse --short HEAD)"
+          git tag "$tag"
+          git push origin "refs/tags/$tag"
+
           git rebase upstream/main
           git push --force-with-lease origin main
+
+          # Prune backup tags older than RETENTION_DAYS. Tags are listed from the
+          # remote because actions/checkout fetches with --no-tags. The timestamp
+          # encoded in the tag name drives retention: for this fixed-width format,
+          # lexicographic order equals chronological order.
+          cutoff=$(date -u -d "$RETENTION_DAYS days ago" +%Y-%m-%dT%H%M)
+          for ref in $(git ls-remote --refs --tags origin 'refs/tags/sync/backup/*' | cut -f2); do
+            t=${ref#refs/tags/}
+            if [[ "${t#sync/backup/}" < "$cutoff" ]]; then
+              echo "Pruning expired backup tag $t"
+              git push origin ":refs/tags/$t"
+            fi
+          done
 
       - name: Disable inherited upstream workflows
         env:
