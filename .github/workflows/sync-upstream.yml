@@ -21,6 +21,11 @@ jobs:
         with:
           ref: main
           fetch-depth: 0  # full history, required for the rebase
+          # PAT with workflow scope (classic: repo+workflow; fine-grained:
+          # Contents+Workflows read/write): pushes rebasing upstream commits that
+          # touch .github/workflows/** are rejected for the default GITHUB_TOKEN,
+          # which cannot be granted the workflows permission.
+          token: ${{ secrets.SYNC_FORK_TOKEN }}
 
       - name: Rebase main onto upstream and push
         run: |
